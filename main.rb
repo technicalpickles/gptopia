@@ -1,12 +1,32 @@
 require "bundler/setup"
-require "langchain"
-require "pry"
-require "dotenv"
-
+Bundler.require(:default)
 Dotenv.load ".env"
-binding.pry
+require "active_model"
 
 llm = Langchain::LLM::OpenAI.new(api_key: ENV["OPENAI_API_KEY"])
+
+class Conversation
+  include ActiveModel::API
+  include ActiveModel::Serialization
+  include ActiveModel::Serializers::JSON
+
+  attr_accessor :name, :messages
+
+
+  def attributes=(hash)
+    hash.each do |key, value|
+      send("#{key}=", value)
+    end
+  end
+
+  def attributes
+    {
+      name: name,
+      messages: messages
+    }
+  end
+end
+
 
 
 messages = [
@@ -14,9 +34,9 @@ messages = [
   { role: "user", content: "I want to run a campaign. It will be using Starfinder. How do I get started planning it?"}
 ]
 
-
-response = llm.chat messages: messages
-
-messages << {role: "user", content: response}
-puts response
+conversation = Conversation.new(name: "Starting a Starfinder Game", messages: messages)
 binding.pry
+
+# response = llm.chat messages: messages
+
+# messages << {role: "user", content: response}

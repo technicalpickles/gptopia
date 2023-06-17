@@ -2,4 +2,7 @@
 
 source "https://rubygems.org"
 
-# gem "rails"
+gem "dotenv"
+gem "langchainrb"
+gem "pry"
+gem "ruby-openai"

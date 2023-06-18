@@ -61,16 +61,41 @@ class Conversation < ChatModel
       messages: messages
     }
   end
+
+  def filename
+    name.gsub(' ', '_').gsub(/[^0-9A-Za-z_]/, '')
+  end
 end
 
 
 prompt = TTY::Prompt.new
 
-name = prompt.ask "Name of conversation:"
-context = prompt.ask "Initial context:"
+conversation_files = Pathname.pwd.glob("data/*.json")
 
-messages = [Message.new(role: "system", content: context)]
-conversation = Conversation.new(name: name, messages: messages)
+conversations = conversation_files.map do |file|
+  Conversation.new.from_json(file.read)
+end
+
+
+choices = {}
+
+conversation_selection = prompt.select "Choose Conversation:" do |menu|
+  conversations.each_with_index do |conversation, i|
+    menu.choice name: conversation.name, value: i
+  end
+
+  menu.choice name: "Start new...", value: -1
+end
+
+if conversation_selection < 0
+  name = prompt.ask "Name of conversation:"
+  context = prompt.ask "Initial context:"
+
+  messages = [Message.new(role: "system", content: context)]
+  conversation = Conversation.new(name: name, messages: messages)
+else
+  conversation = conversations[conversation_selection]
+end
 
 loop do
   user_message = prompt.ask(">")
@@ -80,7 +105,9 @@ loop do
   conversation.messages << Message.new(role: "user", content: user_message)
 end
 
-binding.pry
+open("data/#{conversation.filename}.json", "w") do |f|
+  f.write(conversation.to_json)
+end
 
 # response = llm.chat messages: messages
 

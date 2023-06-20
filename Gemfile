@@ -14,4 +14,3 @@ gem "highline"
 
 gem "ruby-lsp"
 gem "standard"
-gem "facets", require: false

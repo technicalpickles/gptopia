@@ -6,9 +6,8 @@ require "active_model"
 require "active_support/core_ext/string/inflections"
 require "active_support/core_ext/hash/indifferent_access"
 require "active_support/core_ext/hash/keys"
-require "facets/string/indent"
 
-llm = Langchain::LLM::OpenAI.new(api_key: ENV["OPENAI_API_KEY"])
+llm = Langchain::LLM::OpenAI.new(api_key: ENV.fetch("OPENAI_API_KEY"))
 
 class ChatModel
   include ActiveModel::API

@@ -8,9 +8,7 @@ require "active_support/core_ext/hash/indifferent_access"
 require "active_support/core_ext/hash/keys"
 require "facets/string/indent"
 
-pastel = Pastel.new
 llm = Langchain::LLM::OpenAI.new(api_key: ENV["OPENAI_API_KEY"])
-prompt = TTY::Prompt.new
 
 class ChatModel
   include ActiveModel::API
@@ -44,7 +42,7 @@ class Conversation < ChatModel
   end
 
   def filename
-    name.gsub(' ', '_').gsub(/[^0-9A-Za-z_]/, '')
+    name.tr(" ", "_").gsub(/[^0-9A-Za-z_]/, "")
   end
 
   def save
@@ -64,7 +62,7 @@ class ChatUI
   def self.pastel
     @pastel ||= Pastel.new
   end
-  
+
   def pastel
     self.class.pastel
   end
@@ -77,7 +75,7 @@ class ChatUI
     "system" => pastel.yellow(""),
     "user" => pastel.blue("❯"),
     "assistant" => pastel.green("󰚩"),
-    "function" => pastel.green("󰊕"),
+    "function" => pastel.green("󰊕")
 
   }
 
@@ -120,7 +118,7 @@ class ChatUI
     end
   end
 
-  DONE = %w(done end eof exit).freeze
+  DONE = %w[done end eof exit].freeze
 
   def prompt_for_message
     puts pastel.dim.italic("(multiline input; type 'end' on its own line when done. or exit to exit)")
@@ -160,17 +158,16 @@ class ChatUI
   def clear
     puts CLEAR
   end
-
 end
 
 chat = ChatUI.new
 
-conversations = Conversation.all 
-conversation = begin 
-                 chat.select_conversation(conversations)
-               rescue TTY::Reader::InputInterrupt
-                 exit 0
-               end
+conversations = Conversation.all
+conversation = begin
+  chat.select_conversation(conversations)
+rescue TTY::Reader::InputInterrupt
+  exit 0
+end
 
 # start new conversation if none selected
 conversation ||= chat.create_conversation
@@ -205,7 +202,7 @@ begin
     response = chat.wait do
       llm.chat messages: conversation.messages
     end
-    
+
     message = {role: "assistant", content: response}
     conversation.messages << message
     conversation.save
@@ -217,5 +214,3 @@ begin
 rescue Interrupt
   exit 0
 end
-
-

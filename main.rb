@@ -1,21 +1,20 @@
 require "bundler/setup"
 Bundler.require(:default)
 Dotenv.load ".env"
+require "yaml"
 require "reline"
-require "active_model"
 require "active_support/core_ext/string/inflections"
 require "active_support/core_ext/hash/indifferent_access"
 require "active_support/core_ext/hash/keys"
 
 llm = Langchain::LLM::OpenAI.new(api_key: ENV.fetch("OPENAI_API_KEY"))
 
-class ChatModel
-  include ActiveModel::API
-  include ActiveModel::Conversion
-  include ActiveModel::Serialization
-  include ActiveModel::Serializers::JSON
-  include ActiveModel::Model
-  include ActiveModel::Validations
+class Conversation
+  attr_accessor :name, :messages
+
+  def initialize(attributes)
+    self.attributes = attributes
+  end
 
   def attributes=(hash)
     hash.each do |key, value|
@@ -24,20 +23,14 @@ class ChatModel
   end
 
   def attributes
-    raise NotImplementedError
-  end
-end
-
-class Conversation < ChatModel
-  attr_accessor :name, :messages
-
-  validates :name, presence: true
-
-  def attributes
     {
       name: name,
       messages: messages
     }
+  end
+
+  def to_yaml
+    attributes.deep_stringify_keys.to_yaml
   end
 
   def filename
@@ -45,15 +38,24 @@ class Conversation < ChatModel
   end
 
   def save
-    open("data/#{filename}.json", "w") do |f|
-      f.write(to_json)
+    open("data/#{filename}.yaml", "w") do |f|
+      f.write(to_yaml)
     end
   end
 
   def self.all
-    Pathname.pwd.glob("data/*.json").map do |file|
-      new.from_json(file.read)
+    if data_directory.exist?
+      data_directory.glob("*.yaml").map do |file|
+        data = YAML.load_file(file.to_s)
+        conversation = new(data)
+      end
+    else
+      []
     end
+  end
+
+  def self.data_directory
+    @data_directory ||= Pathname.pwd.join("data")
   end
 end
 
@@ -150,7 +152,7 @@ class ChatUI
   end
 
   def spinner
-    @spinner ||= TTY::Spinner.new(":spinner Thinking...", format: :arrow_pulse, clear: true)
+    @spinner ||= TTY::Spinner.new(pastel.yellow(":spinner Thinking..."), format: :arrow_pulse, clear: true)
   end
 
   CLEAR = "\e[H\e[2J"

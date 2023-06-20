@@ -6,9 +6,11 @@ require "active_model"
 require "active_support/core_ext/string/inflections"
 require "active_support/core_ext/hash/indifferent_access"
 require "active_support/core_ext/hash/keys"
+require "facets/string/indent"
 
 pastel = Pastel.new
 llm = Langchain::LLM::OpenAI.new(api_key: ENV["OPENAI_API_KEY"])
+prompt = TTY::Prompt.new
 
 class ChatModel
   include ActiveModel::API
@@ -26,31 +28,6 @@ class ChatModel
 
   def attributes
     raise NotImplementedError
-  end
-end
-
-class Role
-  SYSTEM = :system
-  USER = :user
-  ASSISTANT = :assistant
-  FUNCTION = :function
-
-  VALID_SYMBOLS = [SYSTEM, USER, ASSISTANT, FUNCTION].freeze
-  VALID_STRINGS = VALID_SYMBOLS.map(&:to_s).freeze
-  VALID = (VALID_SYMBOLS + VALID_STRINGS).freeze
-end
-
-class Message < ChatModel
-  attr_accessor :role, :content
-
-  validates_inclusion_of :role, in: Role::VALID
-  validates :content, presence: true
-
-  def attributes
-    {
-      role: role,
-      content: content
-    }
   end
 end
 
@@ -75,104 +52,170 @@ class Conversation < ChatModel
       f.write(to_json)
     end
   end
+
+  def self.all
+    Pathname.pwd.glob("data/*.json").map do |file|
+      new.from_json(file.read)
+    end
+  end
 end
 
-prompt = TTY::Prompt.new
-highline = HighLine.new
+class ChatUI
+  def self.pastel
+    @pastel ||= Pastel.new
+  end
+  
+  def pastel
+    self.class.pastel
+  end
 
-ROLE_PREFIX_MAPPING = {
-  "system" => pastel.yellow(""),
-  "user" => pastel.blue("❯"),
-  "assistant" => pastel.green("󰚩"),
-  "function" => pastel.green("󰊕"),
+  def prompt
+    @prompt ||= TTY::Prompt.new
+  end
 
-}
+  ROLE_PREFIX_MAPPING = {
+    "system" => pastel.yellow(""),
+    "user" => pastel.blue("❯"),
+    "assistant" => pastel.green("󰚩"),
+    "function" => pastel.green("󰊕"),
 
-CONTENT_STYLE = Hash.new(pastel.reset.detach)
-CONTENT_STYLE["system"] = pastel.yellow.italic.detach
+  }
 
-def message_prefix(role)
-  "#{ROLE_PREFIX_MAPPING[role.to_s]} "
-end
+  CONTENT_STYLE = Hash.new(pastel.reset.detach)
+  CONTENT_STYLE["system"] = pastel.yellow.italic.detach
 
-conversation_files = Pathname.pwd.glob("data/*.json")
+  def message_prefix(role)
+    "#{ROLE_PREFIX_MAPPING[role.to_s]} "
+  end
 
-conversations = conversation_files.map do |file|
-  Conversation.new.from_json(file.read)
-end
+  BAR = "─"
+  def separator(width = 80)
+    BAR * width
+  end
 
+  def select_conversation(conversations)
+    prompt.select "Choose Conversation:" do |menu|
+      conversations.each do |conversation|
+        menu.choice name: conversation.name, value: conversation
+      end
 
-choices = {}
+      menu.choice name: "Start new...", value: nil
+    end
+  end
 
-bar = "―"
+  def create_conversation
+    name = Reline.readline("Name of conversation: ")
+    context = Reline.readline("Initial context: ")
 
-conversation_selection = nil
-begin
-  conversation_selection = prompt.select "Choose Conversation:" do |menu|
-    conversations.each_with_index do |conversation, i|
-      menu.choice name: conversation.name, value: i
+    messages = [{role: "system", content: context}]
+    Conversation.new(name: name, messages: messages)
+  end
+
+  def display(conversation)
+    conversation.messages.each do |message|
+      puts
+      puts "#{message_prefix(message[:role])} #{CONTENT_STYLE[message[:role]].call(message[:content])}"
+      puts
+      puts separator
+    end
+  end
+
+  DONE = %w(done end eof exit).freeze
+
+  def prompt_for_message
+    puts pastel.dim.italic("(multiline input; type 'end' on its own line when done. or exit to exit)")
+    user_message = Reline.readmultiline(message_prefix("user"), true) do |multiline_input|
+      # Accept the input until `end` is entered
+      last = multiline_input.split.last
+      DONE.include?(last) || last == "clear"
     end
 
-    menu.choice name: "Start new...", value: -1
+    return :noop unless user_message
+
+    lines = user_message.split("\n")
+    if lines.size > 1 && DONE.include?(lines.last)
+      # remove the "done" from the message
+      user_message = lines[0..-2].join("\n")
+    end
+
+    return :clear if user_message == "clear"
+
+    return :exit if DONE.include?(user_message.downcase)
+
+    user_message
   end
-rescue TTY::Reader::InputInterrupt
+
+  def wait
+    spinner.auto_spin
+    result = yield
+    spinner.stop
+    result
+  end
+
+  def spinner
+    @spinner ||= TTY::Spinner.new(":spinner Thinking...", format: :arrow_pulse, clear: true)
+  end
+
+  CLEAR = "\e[H\e[2J"
+  def clear
+    puts CLEAR
+  end
+
+end
+
+chat = ChatUI.new
+
+conversations = Conversation.all 
+conversation = begin 
+                 chat.select_conversation(conversations)
+               rescue TTY::Reader::InputInterrupt
+                 exit 0
+               end
+
+# start new conversation if none selected
+conversation ||= chat.create_conversation
+
+# serialized as JSON, which doesn't preserve symbol keys
+conversation.messages.each(&:symbolize_keys!)
+
+# display existing conversation
+chat.display(conversation)
+
+begin
+  loop do
+    user_message = chat.prompt_for_message
+
+    case user_message
+    when :noop
+      next
+    when :clear
+      chat.clear
+      next
+    when :exit
+      break
+    end
+
+    conversation.messages << {role: "user", content: user_message}
+    conversation.save
+
+    puts
+    puts chat.separator
+    puts
+
+    response = chat.wait do
+      llm.chat messages: conversation.messages
+    end
+    
+    message = {role: "assistant", content: response}
+    conversation.messages << message
+    conversation.save
+    puts "#{chat.message_prefix("assistant")} #{response}"
+
+    puts
+    puts chat.separator
+  end
+rescue Interrupt
   exit 0
-end
-
-if conversation_selection < 0
-  name = prompt.ask "Name of conversation:"
-  context = prompt.ask "Initial context:"
-
-  messages = [{role: "system", content: context}]
-  conversation = Conversation.new(name: name, messages: messages)
-else
-  conversation = conversations[conversation_selection]
-end
-conversation.messages.each {|message| message.symbolize_keys!}
-
-conversation.messages.each do |message|
-  puts
-  puts "#{message_prefix(message[:role])} #{CONTENT_STYLE[message[:role]].call(message[:content])}"
-  puts
-  puts bar * 80
-end
-
-spinner = TTY::Spinner.new(":spinner Thinking...", format: :arrow_pulse, clear: true)
-
-gather = /\A(done|end|eof|exit)\z/i
-loop do
-  input = []
-  puts
-  puts pastel.dim.italic("(type 'end' on its own line when done)")
-  user_message = Reline.readmultiline(message_prefix("user"), true) do |multiline_input|
-    # Accept the input until `end` is entered
-    multiline_input.split.last =~ gather
-  end
-
-  case user_message&.downcase
-  when nil, gather
-    break
-  end
-
-  conversation.messages << {role: "user", content: user_message}
-  conversation.save
-
-  puts
-  puts bar * 80
-  puts
-
-
-  spinner.auto_spin
-  response = llm.chat messages: conversation.messages
-  spinner.stop
-  
-  message = {role: "assistant", content: response}
-  puts "#{message_prefix("assistant")} #{response}"
-  conversation.messages << message
-  conversation.save
-
-  puts
-  puts bar * 80
 end
 
 

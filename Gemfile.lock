@@ -13,6 +13,7 @@ GEM
     colorize (0.8.1)
     concurrent-ruby (1.2.2)
     dotenv (2.8.1)
+    facets (3.1.0)
     faraday (2.7.6)
       faraday-net_http (>= 2.0, < 3.1)
       ruby2_keywords (>= 0.0.4)
@@ -108,6 +109,7 @@ PLATFORMS
 DEPENDENCIES
   activemodel
   dotenv
+  facets
   highline
   langchainrb
   pastel
